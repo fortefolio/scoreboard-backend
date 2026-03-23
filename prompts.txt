@@ -1,0 +1,5 @@
+1. Write the complete PostgreSQL SQL migration to create all the core tables: Users, Tournaments, Tournament_Participants, Bracket_Matches, Matches, Match_Events, Follows, and User_Tokens. Ensure you include the JSONB data types for event_data and current_score where specified.
+2. Write the PL/pgSQL function and trigger that automatically calculates and updates the current_score JSONB column on the Matches table whenever a new row is inserted into the Match_Events table.
+3. Write the exact PostgreSQL Row Level Security (RLS) policies to protect the matches, match_events, and tournaments tables based on the architecture rules. Ensure you explicitly enable RLS on these tables first.
+4. Write the UNION ALL query to create the user_feed PostgreSQL View that stitches together completed matches and new tournaments based on who the user follows.
+5. Write the Deno/TypeScript code required to verify the Stripe signature and update the user's tier in your database.

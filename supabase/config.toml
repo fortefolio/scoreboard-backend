@@ -396,7 +396,7 @@ entrypoint = "./functions/stripe-webhook/index.ts"
 
 [functions.fcm-notifications]
 enabled = true
-verify_jwt = false
+verify_jwt = true
 import_map = "./functions/fcm-notifications/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
@@ -404,3 +404,25 @@ entrypoint = "./functions/fcm-notifications/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/fcm-notifications/*.html" ]
+
+[functions.generate-tournament-bracket]
+enabled = true
+verify_jwt = true
+import_map = "./functions/generate-tournament-bracket/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/generate-tournament-bracket/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/generate-tournament-bracket/*.html" ]
+
+[functions.finalize-match]
+enabled = true
+verify_jwt = true
+import_map = "./functions/finalize-match/deno.json"
+# Uncomment to specify a custom file path to the entrypoint.
+# Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
+entrypoint = "./functions/finalize-match/index.ts"
+# Specifies static files to be bundled with the function. Supports glob patterns.
+# For example, if you want to serve static HTML pages in your function:
+# static_files = [ "./functions/finalize-match/*.html" ]

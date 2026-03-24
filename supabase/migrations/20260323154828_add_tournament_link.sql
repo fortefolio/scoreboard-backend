@@ -1,0 +1,2 @@
+ALTER TABLE matches
+ADD COLUMN tournament_id UUID REFERENCES tournaments(id) ON DELETE CASCADE;

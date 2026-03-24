@@ -32,3 +32,7 @@ WHERE id = '97e1fd48-226a-47ac-a3f9-0711225aee33';
 SELECT indexname, indexdef
 FROM pg_indexes
 WHERE tablename = 'matches';
+
+DELETE FROM matches WHERE tournament_id = 'eaa5ee90-e06b-491c-a002-c7ca9c0214de';
+
+SELECT * from matches;

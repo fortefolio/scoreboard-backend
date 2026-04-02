@@ -2,8 +2,13 @@
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger AS $$
 BEGIN
-  INSERT INTO public.users (id, subscription_tier)
-  VALUES (new.id, 'free'); -- Default new users to the free tier
+  INSERT INTO public.users (id, subscription_tier, email, name)
+  VALUES (
+    new.id, 
+    'free', 
+    new.email, 
+    COALESCE(new.raw_user_meta_data->>'full_name', new.raw_user_meta_data->>'name')
+  ); -- Default new users to the free tier and sync email/name
   RETURN new;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;

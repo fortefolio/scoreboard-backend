@@ -437,3 +437,9 @@ entrypoint = "./functions/advance-to-knockout/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/advance-to-knockout/*.html" ]
+
+[functions.send-signup-email]
+enabled = true
+verify_jwt = false
+import_map = "./functions/send-signup-email/deno.json"
+entrypoint = "./functions/send-signup-email/index.ts"

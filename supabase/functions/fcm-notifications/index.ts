@@ -24,14 +24,13 @@ const getAccessToken = async (serviceAccount: any) => {
 serve(async (req) => {
   const payload: WebhookPayload = await req.json()
 
-  // Only trigger on completed matches
-  if (payload.table !== 'matches' || payload.record.status !== 'completed') {
-    return new Response('Not a completed match update', { status: 200 })
+  // Trigger on new notifications for push delivery
+  if (payload.table !== 'notifications' || payload.type !== 'INSERT') {
+    return new Response('Not a new notification', { status: 200 })
   }
 
-  const match = payload.record
-  const participants = match.participants || []
-  const participantIds = participants.map((p: any) => p.id)
+  const notification = payload.record
+  const userId = notification.user_id
 
   // Initialize Supabase Client
   const supabase = createClient(
@@ -39,28 +38,11 @@ serve(async (req) => {
     Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
   )
 
-  // 1. Find users following the participants or the competition
-  const { data: followsData, error: followerError } = await supabase
-    .from('follows')
-    .select('user_id')
-    .or(`entity_id.in.(${participantIds.join(',')}),entity_type.eq.competition`)
-
-  if (followerError || !followsData) {
-    console.error('Error fetching followers:', followerError)
-    return new Response('Error fetching followers', { status: 500 })
-  }
-
-  const userIds = followsData.map(f => f.user_id)
-
-  if (userIds.length === 0) {
-    return new Response('No followers to notify', { status: 200 })
-  }
-
-  // 1.5 Fetch the FCM tokens for those specific users
+  // 1. Fetch the FCM tokens for this specific user
   const { data: tokenData, error: tokenError } = await supabase
     .from('user_tokens')
     .select('fcm_token')
-    .in('user_id', userIds)
+    .eq('user_id', userId)
 
   if (tokenError || !tokenData) {
     console.error('Error fetching tokens:', tokenError)
@@ -70,7 +52,7 @@ serve(async (req) => {
   const tokens = [...new Set(tokenData.map(t => t.fcm_token))]
 
   if (tokens.length === 0) {
-    return new Response('No tokens found for followers', { status: 200 })
+    return new Response('No tokens found for user', { status: 200 })
   }
 
   // 2. Authenticate with Google FCM
@@ -90,12 +72,12 @@ serve(async (req) => {
         message: {
           token,
           notification: {
-            title: 'Match Completed!',
-            body: `${match.sport_type} match finished. Score: ${JSON.stringify(match.current_score)}`,
+            title: notification.title,
+            body: notification.body,
           },
           data: {
-            match_id: match.id,
-            type: 'match_completed'
+            ...notification.data,
+            notification_id: notification.id
           }
         },
       }),

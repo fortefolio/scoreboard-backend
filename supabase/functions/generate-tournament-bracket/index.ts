@@ -48,18 +48,23 @@ serve(async (req) => {
       return { id: team.id, name: team.name };
     });
 
+    const maxTeams = settings?.stage_1?.max_teams ? parseInt(settings.stage_1.max_teams) : participants.length;
+    const limitedParticipants = participants.slice(0, maxTeams);
+
+    console.log(`Using ${limitedParticipants.length} participants (Max: ${maxTeams})`);
+
     const matchesToCreate = [];
     const type = settings?.stage_1?.type || 'bracket';
 
     // --- STAGE 1: GROUPS (ROUND ROBIN) ---
     if (type === "groups") {
-      const teamsPerGroup = settings.stage_1.teams_per_group || 4;
-      const numGroups = Math.ceil(participants.length / teamsPerGroup);
+      const teamsPerGroup = 4; // Default group size
+      const numGroups = Math.ceil(limitedParticipants.length / teamsPerGroup);
       
       const groups: Record<string, any[]> = {};
       for (let i = 0; i < numGroups; i++) {
         const groupLabel = String.fromCharCode(65 + i);
-        groups[groupLabel] = participants.slice(i * teamsPerGroup, (i + 1) * teamsPerGroup);
+        groups[groupLabel] = limitedParticipants.slice(i * teamsPerGroup, (i + 1) * teamsPerGroup);
       }
 
       Object.entries(groups).forEach(([label, groupTeams]) => {
@@ -81,12 +86,12 @@ serve(async (req) => {
     } 
     // --- STAGE 1: DOUBLE ELIMINATION ---
     else if (type === 'double_elimination') {
-      const teamCount = participants.length;
+      const teamCount = limitedParticipants.length;
       const bracketSize = Math.pow(2, Math.ceil(Math.log2(teamCount)));
       const winnersRounds = Math.log2(bracketSize);
 
       const seededTeams = Array(bracketSize).fill(null);
-      for (let i = 0; i < teamCount; i++) seededTeams[i] = participants[i];
+      for (let i = 0; i < teamCount; i++) seededTeams[i] = limitedParticipants[i];
 
       const round2Participants = Array.from({ length: Math.max(1, bracketSize / 4) }, () => [null, null]);
 
@@ -163,12 +168,12 @@ serve(async (req) => {
     }
     // --- STAGE 1: SINGLE ELIMINATION BRACKET ---
     else {
-      const teamCount = participants.length;
+      const teamCount = limitedParticipants.length;
       const bracketSize = Math.pow(2, Math.ceil(Math.log2(teamCount)));
       const roundsCount = Math.log2(bracketSize);
 
       const seededTeams = Array(bracketSize).fill(null);
-      for (let i = 0; i < teamCount; i++) seededTeams[i] = participants[i];
+      for (let i = 0; i < teamCount; i++) seededTeams[i] = limitedParticipants[i];
 
       const round2Participants = Array.from({ length: Math.max(1, bracketSize / 4) }, () => [null, null]);
 
@@ -220,6 +225,25 @@ serve(async (req) => {
         }
         currentRoundSize /= 2;
       }
+    }
+
+    // Assign dates if available in settings
+    const roundDates = settings?.round_dates || {};
+    
+    matchesToCreate.forEach((match) => {
+      if (match.round_number && roundDates[match.round_number]) {
+        match.round_date = roundDates[match.round_number];
+        // If it's the first round, maybe set a default scheduled_at to the start of the round_date
+        match.scheduled_at = match.round_date; 
+      }
+    });
+
+    // Assign courts if available
+    const numberOfCourts = settings?.number_of_courts || 0;
+    if (numberOfCourts > 0) {
+      matchesToCreate.forEach((match, index) => {
+        match.court = ((index % numberOfCourts) + 1).toString();
+      });
     }
 
     const { data: matchData, error: matchError } = await supabase

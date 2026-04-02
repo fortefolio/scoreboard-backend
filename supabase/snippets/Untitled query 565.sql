@@ -1,0 +1,1 @@
+COMMENT ON TABLE tournament_participants IS 'Table for tournament players and teams';

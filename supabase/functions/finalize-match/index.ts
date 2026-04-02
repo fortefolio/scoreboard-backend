@@ -17,25 +17,30 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // 1. Fetch Match and Tournament Rules
+    // Fetch Match and Tournament Rules
     const { data: match, error: fetchError } = await supabase
       .from('matches')
       .select('*, tournaments(*)')
       .eq('id', matchId)
       .single()
 
-    if (fetchError || !match) throw new Error("Match not found")
+    if (fetchError || !match) throw new Error(`Match not found: ${fetchError?.message || 'No record'}`)
 
-    const rules = match.tournaments.settings?.overrides?.[match.round_number] || 
-                  match.tournaments.settings?.default || {}
+    // Priority: Match settings > Tournament Round overrides > Tournament Default settings
+    const tournamentSettings = match.tournaments?.settings || {};
+    const rules = (match.settings && Object.keys(match.settings).length > 0) ? match.settings : 
+                  (tournamentSettings.overrides?.[match.round_number] || 
+                   tournamentSettings.default || { max_sets: 3, points_per_set: 25 });
     
     // 2. BACKEND VALIDATION
     let t1Sets = 0, t2Sets = 0;
-    const setsToWin = Math.ceil(rules.max_sets / 2);
+    const maxSets = rules.max_sets || 3;
+    const setsToWin = Math.ceil(maxSets / 2);
 
     for (const set of setHistory) {
       const p1 = set.team1, p2 = set.team2;
-      const target = rules.points_per_set, cap = rules.point_cap;
+      const target = rules.points_per_set || 25;
+      const cap = rules.point_cap;
       const winnerScore = Math.max(p1, p2), loserScore = Math.min(p1, p2);
       const lead = winnerScore - loserScore;
 
@@ -51,7 +56,9 @@ serve(async (req) => {
       if (p1 > p2) t1Sets++; else t2Sets++;
     }
 
-    if (t1Sets < setsToWin && t2Sets < setsToWin) throw new Error("Match not yet finished.");
+    if (t1Sets < setsToWin && t2Sets < setsToWin) {
+      throw new Error(`Match not yet finished. Sets: ${t1Sets}-${t2Sets}. Need ${setsToWin} to win.`);
+    }
 
     // 3. SECURE ADVANCEMENT
     const winnerIdx = t1Sets > t2Sets ? 0 : 1;
@@ -59,13 +66,21 @@ serve(async (req) => {
     const winner = match.participants[winnerIdx];
     const loser = match.participants[loserIdx];
 
+    if (!winner) throw new Error("Could not determine winner from participants list.");
+
     // Update current match
-    await supabase.from('matches').update({
+    const { error: updateError } = await supabase.from('matches').update({
       status: 'completed',
-      current_score: { sets: setHistory, final_sets: [t1Sets, t2Sets] }
+      scores: { 
+        ...match.scores,
+        final_history: setHistory,
+        final_sets: [t1Sets, t2Sets] 
+      }
     }).eq('id', matchId)
 
-    const tournamentType = match.tournaments.settings?.stage_1?.type;
+    if (updateError) throw new Error(`Failed to update match: ${updateError.message}`);
+
+    const tournamentType = match.tournaments?.settings?.stage_1?.type;
 
     // --- CASE A: WINNERS BRACKET (DOUBLE ELIMINATION) ---
     if (match.bracket_type === 'main' && tournamentType === 'double_elimination') {

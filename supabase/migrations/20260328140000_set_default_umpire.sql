@@ -11,7 +11,6 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Trigger to call the function before insert
-DROP TRIGGER IF EXISTS on_match_inserted_set_umpire ON public.matches;
 CREATE TRIGGER on_match_inserted_set_umpire
   BEFORE INSERT ON public.matches
   FOR EACH ROW EXECUTE PROCEDURE public.handle_match_umpire_default();

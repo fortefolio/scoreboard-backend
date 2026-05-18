@@ -1,7 +1,4 @@
--- 1. Add group_label to matches
-ALTER TABLE public.matches ADD COLUMN IF NOT EXISTS group_label TEXT;
-
--- 2. Create the Standings View
+-- 1. Create the Standings View
 CREATE OR REPLACE VIEW public.group_standings 
 WITH (security_invoker = true)
 AS

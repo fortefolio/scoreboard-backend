@@ -10,10 +10,7 @@ BEGIN;
 
 DROP POLICY IF EXISTS "Organizers can insert matches" ON public.matches;
 DROP POLICY IF EXISTS "Organizers can update their matches" ON public.matches;
-DROP POLICY IF EXISTS "Admins and Umpires can update matches" ON public.matches;
 DROP POLICY IF EXISTS "Matches visibility policy" ON public.matches;
-DROP POLICY IF EXISTS "Public can view matches" ON public.matches;
-DROP POLICY IF EXISTS "Matches are viewable by everyone" ON public.matches;
 
 -- Consolidated SELECT: Follows tournament visibility
 CREATE POLICY "Matches visibility policy"
@@ -54,7 +51,6 @@ DROP POLICY IF EXISTS "Organizers can update their tournaments" ON public.tourna
 DROP POLICY IF EXISTS "Organizers can delete their own tournaments" ON public.tournaments;
 DROP POLICY IF EXISTS "Tournaments visibility policy" ON public.tournaments;
 DROP POLICY IF EXISTS "Organizers can view their own tournaments" ON public.tournaments;
-DROP POLICY IF EXISTS "Tournaments are viewable by everyone" ON public.tournaments;
 
 -- Consolidated SELECT: Follows visibility settings
 CREATE POLICY "Tournaments visibility policy"
@@ -92,7 +88,6 @@ USING (organizer_id = (SELECT auth.uid()));
 
 DROP POLICY IF EXISTS "Match events visibility policy" ON public.match_events;
 DROP POLICY IF EXISTS "Only match organizers can insert events" ON public.match_events;
-DROP POLICY IF EXISTS "Match events are viewable by everyone" ON public.match_events;
 
 CREATE POLICY "Match events visibility policy"
 ON public.match_events FOR SELECT

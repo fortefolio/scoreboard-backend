@@ -1,6 +1,3 @@
--- Enable the pg_net extension
-CREATE EXTENSION IF NOT EXISTS "pg_net";
-
 -- Function to trigger the edge function via pg_net
 CREATE OR REPLACE FUNCTION public.handle_new_signup()
 RETURNS TRIGGER AS $$

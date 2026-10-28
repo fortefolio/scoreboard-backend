@@ -12,6 +12,14 @@ const escapeHtml = (unsafe: string) =>
     .replace(/'/g, '&#039;')
 
 serve(async (req) => {
+  const authHeader = req.headers.get('Authorization')
+  if (!authHeader) {
+    return new Response(JSON.stringify({ error: 'Unauthorized: missing authorization header' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
   const { record } = await req.json()
 
   if (!record || !record.contact_email) {

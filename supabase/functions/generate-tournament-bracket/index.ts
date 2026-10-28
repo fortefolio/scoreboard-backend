@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const corsHeaders = {
@@ -6,7 +5,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
@@ -29,18 +28,41 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     )
 
-    // Fetch settings if not provided in request
-    let settings = manualSettings;
-    if (!settings) {
-      const { data: tournament, error: fetchError } = await supabase
-        .from('tournaments')
-        .select('settings')
-        .eq('id', tournament_id)
-        .single();
-      
-      if (fetchError) throw new Error(`Could not fetch tournament settings: ${fetchError.message}`);
-      settings = tournament?.settings || {};
+    // Verify caller identity and organizer ownership
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Missing Authorization header' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 401,
+      })
     }
+    const token = authHeader.replace(/^Bearer\s+/i, '')
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Invalid or expired auth token' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 401,
+      })
+    }
+
+    const { data: tournamentRecord, error: fetchError } = await supabase
+      .from('tournaments')
+      .select('organizer_id, settings')
+      .eq('id', tournament_id)
+      .single();
+
+    if (fetchError || !tournamentRecord) {
+      throw new Error(`Could not fetch tournament: ${fetchError?.message || 'Not found'}`);
+    }
+    if (tournamentRecord.organizer_id !== user.id) {
+      return new Response(JSON.stringify({ error: 'Forbidden: Only the tournament organizer can generate brackets' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 403,
+      })
+    }
+
+    // Fetch settings if not provided in request
+    const settings = manualSettings || tournamentRecord.settings || {};
 
     // 1. Transform teams into Participant Objects
     const participants = teams.map((team: any) => {
@@ -48,7 +70,8 @@ serve(async (req) => {
       return { id: team.id, name: team.name };
     });
 
-    const maxTeams = settings?.stage_1?.max_teams ? parseInt(settings.stage_1.max_teams) : participants.length;
+    const rawMaxTeams = settings?.max_teams ?? settings?.stage_1?.max_teams;
+    const maxTeams = rawMaxTeams ? parseInt(String(rawMaxTeams), 10) : participants.length;
     const limitedParticipants = participants.slice(0, maxTeams);
 
     console.log(`Using ${limitedParticipants.length} participants (Max: ${maxTeams})`);

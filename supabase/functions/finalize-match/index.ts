@@ -26,6 +26,29 @@ serve(async (req) => {
 
     if (fetchError || !match) throw new Error(`Match not found: ${fetchError?.message || 'No record'}`)
 
+    // Verify caller identity (must be match umpire or organizer)
+    const authHeader = req.headers.get('Authorization')
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Missing Authorization header' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 401,
+      })
+    }
+    const token = authHeader.replace(/^Bearer\s+/i, '')
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+    if (authError || !user) {
+      return new Response(JSON.stringify({ error: 'Invalid or expired auth token' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 401,
+      })
+    }
+    if (user.id !== match.umpire_id && user.id !== match.organizer_id) {
+      return new Response(JSON.stringify({ error: 'Forbidden: Only the assigned umpire or organizer can finalize this match' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 403,
+      })
+    }
+
     // Priority: Match settings > Tournament Round overrides > Tournament Default settings
     const tournamentSettings = match.tournaments?.settings || {};
     const rules = (match.settings && Object.keys(match.settings).length > 0) ? match.settings : 

@@ -3,6 +3,14 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
 const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')
 
+const escapeHtml = (unsafe: string) =>
+  String(unsafe ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;')
+
 serve(async (req) => {
   const { record } = await req.json()
 
@@ -38,9 +46,9 @@ serve(async (req) => {
       to: [record.contact_email],
       subject: `Registration Confirmed: ${tournament.name}`,
       html: `
-        <h1>Welcome to ${tournament.name}!</h1>
-        <p>Hi ${record.name},</p>
-        <p>Your registration for <strong>${tournament.name}</strong> has been confirmed.</p>
+        <h1>Welcome to ${escapeHtml(tournament.name)}!</h1>
+        <p>Hi ${escapeHtml(record.name)},</p>
+        <p>Your registration for <strong>${escapeHtml(tournament.name)}</strong> has been confirmed.</p>
         <p>We'll notify you when the bracket is generated and matches are scheduled.</p>
         <br />
         <p>Good luck!</p>

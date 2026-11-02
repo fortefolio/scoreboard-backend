@@ -42,8 +42,18 @@ serve(async (req) => {
         status: 401,
       })
     }
-    if (user.id !== match.umpire_id && user.id !== match.organizer_id) {
-      return new Response(JSON.stringify({ error: 'Forbidden: Only the assigned umpire or organizer can finalize this match' }), {
+    if (match.status === 'completed') {
+      return new Response(JSON.stringify({ error: 'Conflict: Match is already completed' }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        status: 409,
+      })
+    }
+
+    const isOrganizer = user.id === match.organizer_id
+    const isAcceptedUmpire = user.id === match.umpire_id && match.umpire_invite_status === 'accepted'
+
+    if (!isOrganizer && !isAcceptedUmpire) {
+      return new Response(JSON.stringify({ error: 'Forbidden: Only the match organizer or accepted umpire can finalize this match' }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 403,
       })

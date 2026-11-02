@@ -12,9 +12,16 @@ const escapeHtml = (unsafe: string) =>
     .replace(/'/g, '&#039;')
 
 serve(async (req) => {
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader) {
-    return new Response(JSON.stringify({ error: 'Unauthorized: missing authorization header' }), {
+  const authHeader = req.headers.get('Authorization') ?? ''
+  const webhookSecret = req.headers.get('X-Webhook-Secret') ?? ''
+  const expectedSecret = Deno.env.get('INTERNAL_WEBHOOK_SECRET')
+  const expectedServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+
+  const isServiceRole = Boolean(expectedServiceKey && authHeader === `Bearer ${expectedServiceKey}`)
+  const isValidSecret = Boolean(expectedSecret && webhookSecret === expectedSecret)
+
+  if (!isServiceRole && !isValidSecret) {
+    return new Response(JSON.stringify({ error: 'Unauthorized: internal callers only' }), {
       status: 401,
       headers: { 'Content-Type': 'application/json' },
     })

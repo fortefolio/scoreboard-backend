@@ -22,6 +22,22 @@ const getAccessToken = async (serviceAccount: any) => {
 }
 
 serve(async (req) => {
+  // Option 1A Security Guard: Restrict strictly to internal database webhooks or service role callers
+  const authHeader = req.headers.get('Authorization') ?? ''
+  const webhookSecret = req.headers.get('X-Webhook-Secret') ?? ''
+  const expectedSecret = Deno.env.get('INTERNAL_WEBHOOK_SECRET')
+  const expectedServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+
+  const isServiceRole = Boolean(expectedServiceKey && authHeader === `Bearer ${expectedServiceKey}`)
+  const isValidSecret = Boolean(expectedSecret && webhookSecret === expectedSecret)
+
+  if (!isServiceRole && !isValidSecret) {
+    return new Response(JSON.stringify({ error: 'Unauthorized: internal callers only' }), {
+      headers: { 'Content-Type': 'application/json' },
+      status: 401,
+    })
+  }
+
   const payload: WebhookPayload = await req.json()
 
   // Trigger on new notifications for push delivery

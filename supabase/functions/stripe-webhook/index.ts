@@ -36,8 +36,16 @@ serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
   )
 
-  if (event.type === "checkout.session.completed") {
+  if (event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded") {
     const session = event.data.object
+    if (session.payment_status !== "paid") {
+      console.log(`Payment status is ${session.payment_status}, deferring pro upgrade until payment succeeds.`)
+      return new Response(JSON.stringify({ received: true, status: "pending_payment" }), {
+        headers: { "Content-Type": "application/json" },
+        status: 200,
+      })
+    }
+
     const userId = session.metadata?.supabase_user_id
 
     if (userId) {

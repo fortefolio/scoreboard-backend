@@ -9,7 +9,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    const { tournament_id, organizer_id, sport_type, teams: rawTeams, settings: manualSettings } = await req.json()
+    const { tournament_id, sport_type, teams: rawTeams, settings: manualSettings } = await req.json()
 
     // 0. Clean and Validate Teams
     const teams = (rawTeams || []).filter((t: any) => {
@@ -60,6 +60,9 @@ Deno.serve(async (req) => {
         status: 403,
       })
     }
+
+    // Always use the authenticated organizer ID verified against the database record
+    const organizer_id = tournamentRecord.organizer_id;
 
     // Fetch settings if not provided in request
     const settings = manualSettings || tournamentRecord.settings || {};

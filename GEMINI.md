@@ -33,4 +33,5 @@
 
 ## 5. Operational Procedures
 * **Database Updates:** Always inform the user if a database reset (`supabase db reset`), migration application, or any other manual action is required after changing the database schema, triggers, or views.
+* **Secret Management & GitHub Push Protection:** NEVER hardcode Supabase Secret Keys or service role tokens (`sb_secret_*`) in any migrations, seed files, load test scripts, or documentation. Read them exclusively through environment variables.
 

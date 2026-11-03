@@ -95,7 +95,7 @@ serve(async (req) => {
             },
             product_data: {
               name: `ScoreBoard Pro Organizer (${isAnnual ? "Annual" : "Monthly"})`,
-              description: "Unlimited tournament creation, referee management, custom branding, and broadcast overlays.",
+              description: "Unlimited tournament creation, referee management, custom branding, and fixture exports.",
             },
           },
           quantity: 1,

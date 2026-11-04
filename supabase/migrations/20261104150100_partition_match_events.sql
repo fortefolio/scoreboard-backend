@@ -142,16 +142,16 @@ WITH CHECK (
 );
 
 -- 9. Schedule nightly maintenance via pg_cron if available
-DO $$
+DO $cron_job$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') 
      AND EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'run_maintenance_proc' AND pronamespace = 'partman'::regnamespace) THEN
     PERFORM cron.schedule(
       'maintain-match-events-partitions',
       '0 3 * * *',
-      $$ CALL partman.run_maintenance_proc(); $$
+      'CALL partman.run_maintenance_proc();'
     );
   END IF;
 EXCEPTION WHEN OTHERS THEN
   RAISE NOTICE 'cron.schedule skipped: %', SQLERRM;
-END $$;
+END $cron_job$;

@@ -39,6 +39,15 @@ BEGIN
     WHERE n.nspname = 'public' AND c.relname = 'match_events'
   ) THEN
     ALTER TABLE public.match_events RENAME TO match_events_legacy;
+
+    -- Rename existing legacy indexes to avoid constraint name collisions
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'match_events_pkey' AND relnamespace = 'public'::regnamespace) THEN
+      ALTER INDEX public.match_events_pkey RENAME TO match_events_legacy_pkey;
+    END IF;
+
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'match_events_idempotency_key_key' AND relnamespace = 'public'::regnamespace) THEN
+      ALTER INDEX public.match_events_idempotency_key_key RENAME TO match_events_legacy_idempotency_key;
+    END IF;
   END IF;
 END $$;
 

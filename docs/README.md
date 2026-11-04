@@ -1,68 +1,68 @@
-# ScoreBoard — Codebase Architecture & Living Wiki
+# ScoreBoard Backend — Technical Wiki & Database Architecture
 
-Welcome to the technical knowledge base for **ScoreBoard**, a multi-sport live scoring, tournament management, and broadcast platform.
+Welcome to the technical knowledge base for **`scoreboard-backend`**, the Supabase data and services foundation for the ScoreBoard ecosystem (PostgreSQL 15, Row Level Security, Deno Edge Functions, Realtime replication, and Stripe/FCM webhooks).
 
 ```mermaid
 flowchart TD
-    subgraph Clients["Clients"]
+    subgraph Clients["Consumers"]
         Web["scoreboard-web<br/>Next.js 16 (App Router)"]
         Mobile["scoreboard-mobile<br/>React Native (Expo)"]
-        OBS["Broadcast Overlays<br/>OBS Studio / vMix"]
+        Overlays["OBS / vMix Broadcast Overlays"]
     end
 
-    subgraph Backend["Supabase Backend"]
-        DB[("PostgreSQL 15<br/>RLS + Realtime")]
-        Auth["Supabase Auth"]
-        Edge["Edge Functions<br/>Deno / TypeScript"]
+    subgraph Backend["scoreboard-backend (Supabase)"]
+        DB[("PostgreSQL 15<br/>Tables + RLS Policies")]
+        RPCs["Custom Database RPCs<br/>(appoint_umpire, redeem_voucher, etc.)"]
+        Realtime["Realtime Engine<br/>Postgres CDC Broadcast"]
+        Auth["Supabase Auth (GoTrue)"]
+        Edge["Deno Edge Functions<br/>(stripe-webhook, checkout, portal, push)"]
     end
 
     subgraph External["External Integrations"]
-        Stripe["Stripe Payments<br/>Checkout & Billing Portal"]
-        Firebase["Firebase Cloud Messaging<br/>Push Notifications"]
+        Stripe["Stripe Payments API"]
+        FCM["Firebase Cloud Messaging (FCM v1)"]
     end
 
-    Web -->|SSR & Client Queries| DB
+    Web -->|PostgREST & RPCs| DB
     Web -->|Auth Session| Auth
-    Web -->|Create Checkout / Portal| Edge
-    Mobile -->|Offline Queue & Live Sync| DB
+    Web -->|Invoke| Edge
+    Mobile -->|PostgREST & RPCs| DB
     Mobile -->|Auth Session| Auth
-    OBS -->|Realtime WebSocket| DB
+    Overlays -->|Realtime WebSockets| Realtime
+    DB --> Realtime
 
-    Edge -->|Webhook Events| Stripe
-    Edge -->|Push Triggers| Firebase
     Edge -->|Service Role DB Access| DB
+    Edge -->|Webhook Lifecycle| Stripe
+    Edge -->|Push Notifications| FCM
 ```
 
 ---
 
-## 📚 Living Wiki Index
+## 📚 Backend Wiki Index
 
 | Document | Topic | Description |
 | :--- | :--- | :--- |
-| **[`00-core-schema.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/docs/00-core-schema.md)** | **Database & Data Layer** | PostgreSQL schema, tables (`users`, `matches`, `tournaments`, `subscriptions`, `vouchers`), RLS policies, custom RPCs, and Mermaid ERD. |
-| **[`01-backend-supabase.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/docs/01-backend-supabase.md)** | **Backend & Edge Functions** | Edge functions (`stripe-webhook`, `create-checkout-session`, `create-portal-session`, `fcm-push`), Supabase Realtime channels. |
-| **[`02-frontend-mobile.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/docs/02-frontend-mobile.md)** | **Mobile Application** | Expo / React Native architecture, offline-first scoring queue, match umpire controls. |
-| **[`03-frontend-web.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/docs/03-frontend-web.md)** | **Web Application** | Next.js 16 App Router, Match Details, live scoreboards, OBS/vMix broadcast overlays, Pro billing modal. |
-| **[`04-sports-engine.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/docs/04-sports-engine.md)** | **Sports & Scoring Logic** | Rules hierarchy, set structures, tiebreak engines, Golden Points (Tennis, Padel, Volleyball, Basketball, Football). |
-| **[`TERMS_AND_CONDITIONS.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/docs/TERMS_AND_CONDITIONS.md)** | **Terms & GDPR Compliance** | Subscriptions (€3.99/mo, €34.99/yr), voucher redemption, GDPR Article 17 (Right to Erasure), user data responsibility. |
+| **[`00-database-schema.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/scoreboard-backend/docs/00-database-schema.md)** | **Database & RLS Layer** | PostgreSQL schema, tables (`users`, `matches`, `tournaments`, `subscriptions`, `vouchers`), RLS policies, custom RPCs, and Mermaid ERD. |
+| **[`01-edge-functions.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/scoreboard-backend/docs/01-edge-functions.md)** | **Deno Edge Functions** | Edge functions catalog (`stripe-webhook`, `create-checkout-session`, `create-portal-session`, `fcm-push`), Supabase Realtime channels. |
+| **[`02-database-rpcs-and-scoring.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/scoreboard-backend/docs/02-database-rpcs-and-scoring.md)** | **Database RPCs & Sport Engine** | Stored procedures (`appoint_match_umpire`, `redeem_voucher`), state machines, and scoring constraints across supported sports. |
+| **[`03-subscriptions-and-gdpr.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/scoreboard-backend/docs/03-subscriptions-and-gdpr.md)** | **Billing, Vouchers & GDPR** | Stripe tier mappings (€3.99/mo, €34.99/yr), beta voucher redemption engine, and GDPR Article 17 user deletion procedures. |
 
 ---
 
-## 🛠️ Monorepo Structure
+## 🛠️ Repository Layout
 
 ```text
-ScoreBoard/
-├── docs/                        # Living technical wiki
-├── scoreboard-backend/          # Supabase configuration, migrations, edge functions
-│   └── supabase/
-│       ├── functions/           # Deno Edge Functions (stripe-webhook, checkout, etc.)
-│       └── migrations/          # Version-controlled SQL migrations
-├── scoreboard-web/              # Next.js 16 Web application
-│   ├── app/                     # App Router pages (matches, tournaments, overlays, settings)
-│   ├── components/              # Shared UI & business components
-│   └── lib/                     # Scoring rules, offline sync, i18n
-├── scoreboard-mobile/           # Expo / React Native mobile app
+scoreboard-backend/
+├── docs/                        # Backend technical wiki
+├── supabase/
+│   ├── config.toml              # Supabase CLI project configuration
+│   ├── functions/               # Deno Edge Functions
+│   │   ├── create-checkout-session/
+│   │   ├── create-portal-session/
+│   │   ├── fcm-push/
+│   │   └── stripe-webhook/
+│   └── migrations/              # Version-controlled PostgreSQL migrations
 └── .agents/                     # AI Agent configuration
-    ├── rules/                   # Continuous rules (docs-sync.md)
-    └── skills/                  # Open Agent Skills (living-docs, security-audit)
+    ├── rules/docs-sync.md       # Backend documentation synchronization rule
+    └── skills/living-docs/      # Living Docs skill
 ```

@@ -121,10 +121,21 @@ Stores individual and tournament matches:
 
 ---
 
+### `match_events` (Declarative Range Partitioning)
+Stores append-only point scoring telemetry, partitioned by `created_at` (monthly) with `pg_partman` and `match_events_default`:
+- **`id`** (`uuid`): Event identifier.
+- **`match_id`** (`uuid`, FK): References `matches(id)`.
+- **`idempotency_key`** (`uuid`): Client UUID preventing duplicate score emissions.
+- **`event_data`** (`jsonb`): Sport point details.
+- **`created_at`** (`timestamptz`): Partition key (composite PK with `id`).
+
+---
+
 ## 3. Custom Database RPC Functions
 
 | RPC Function | Parameters | Returns | Description |
 | :--- | :--- | :--- | :--- |
+| **`record_match_event_atomic`** | `p_match_id`, `p_idempotency_key`, `p_new_scores`, `p_event_data`, `p_new_status` | `jsonb` | High-concurrency atomic scoring RPC: verifies umpire authorization, checks partition-pruned idempotency, logs to active partition, updates scoreboard, and dispatches Postgres `realtime.send` broadcast. |
 | **`redeem_voucher`** | `code text` | `jsonb` | Atomically validates voucher status, expiration, and usage limits; inserts redemption; creates an active subscription; and elevates user to Pro. |
 | **`get_my_subscription`** | *(none, uses `auth.uid()`)* | `jsonb` | Returns active subscription details, source provider, plan type, and days remaining. |
 | **`appoint_match_umpire`** | `p_match_id uuid`, `p_umpire_id uuid` | `void` | Assigns an official referee or allows umpires to self-claim matches. |

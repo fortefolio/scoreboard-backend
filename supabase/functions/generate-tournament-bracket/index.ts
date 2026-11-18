@@ -19,7 +19,7 @@ Deno.serve(async (req) => {
 
     console.log(`Generating bracket for ${teams.length} teams (Tournament: ${tournament_id})`);
 
-    if (!tournament_id || !organizer_id || teams.length < 2) {
+    if (!tournament_id || teams.length < 2) {
       throw new Error(`Invalid request: ${teams.length} valid teams found. Need at least 2.`)
     }
 

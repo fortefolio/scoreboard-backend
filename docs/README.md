@@ -46,6 +46,7 @@ flowchart TD
 | **[`01-edge-functions.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/scoreboard-backend/docs/01-edge-functions.md)** | **Deno Edge Functions** | Edge functions catalog (`stripe-webhook`, `create-checkout-session`, `create-portal-session`, `fcm-push`), Supabase Realtime channels. |
 | **[`02-database-rpcs-and-scoring.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/scoreboard-backend/docs/02-database-rpcs-and-scoring.md)** | **Database RPCs & Sport Engine** | Stored procedures (`appoint_match_umpire`, `redeem_voucher`), state machines, and scoring constraints across supported sports. |
 | **[`03-subscriptions-and-gdpr.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/scoreboard-backend/docs/03-subscriptions-and-gdpr.md)** | **Billing, Vouchers & GDPR** | Stripe tier mappings (€3.99/mo, €34.99/yr), beta voucher redemption engine, and GDPR Article 17 user deletion procedures. |
+| **[`04-zero-downtime-deployments.md`](file:///Users/goncaloforte/Sandbox/ScoreBoard/scoreboard-backend/docs/04-zero-downtime-deployments.md)** | **Zero-Downtime Rollouts** | 4-phase Expand-and-Contract playbook for shipping breaking changes safely across Supabase, Web, and Mobile. |
 
 ---
 

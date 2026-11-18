@@ -33,5 +33,6 @@
 
 ## 5. Operational Procedures
 * **Database Updates:** Always inform the user if a database reset (`supabase db reset`), migration application, or any other manual action is required after changing the database schema, triggers, or views.
+* **Zero-Downtime Breaking Changes (Expand-and-Contract):** Never `DROP`, `RENAME`, or break an existing table column, RPC signature, Edge Function contract, or Realtime payload in the same release as client updates. Always ship an additive, backward-compatible backend migration first (Phase 1), roll out Web and Mobile (`EAS Update` / store build) (Phase 2), wait for legacy mobile adoption or `min_supported_version` cutoff (Phase 3), and drop legacy fields/overloads in a follow-up cleanup migration (Phase 4). See `docs/04-zero-downtime-deployments.md`.
 * **Secret Management & GitHub Push Protection:** NEVER hardcode Supabase Secret Keys or service role tokens (`sb_secret_*`) in any migrations, seed files, load test scripts, or documentation. Read them exclusively through environment variables.
 

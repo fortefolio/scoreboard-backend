@@ -2,11 +2,13 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 import Stripe from "https://esm.sh/stripe@11.1.0?target=deno"
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-}
+import {
+  getCorsHeaders,
+  getDefaultReturnOrigin,
+  handleCorsPreflight,
+  isAllowedReturnUrl,
+} from "../_shared/cors.ts"
+import { AppError, handleEdgeError, jsonError, jsonResponse } from "../_shared/errors.ts"
 
 const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") ?? "", {
   apiVersion: "2022-11-15",
@@ -14,17 +16,15 @@ const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY") ?? "", {
 })
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders })
-  }
+  const preflight = handleCorsPreflight(req)
+  if (preflight) return preflight
+
+  const corsHeaders = getCorsHeaders(req)
 
   try {
     const authHeader = req.headers.get("Authorization")
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: "Missing Authorization header" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 401,
-      })
+      return jsonError(401, "Missing Authorization header", corsHeaders)
     }
 
     const supabase = createClient(
@@ -36,15 +36,21 @@ serve(async (req) => {
     const { data: { user }, error: authError } = await supabase.auth.getUser(token)
 
     if (authError || !user) {
-      return new Response(JSON.stringify({ error: "Invalid or expired auth token" }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 401,
-      })
+      return jsonError(401, "Invalid or expired auth token", corsHeaders)
     }
 
     const { plan = "monthly", returnUrl } = await req.json().catch(() => ({}))
     const isAnnual = plan === "annual"
-    const fallbackOrigin = returnUrl || "http://localhost:3000"
+
+    let targetOrigin: string
+    if (returnUrl !== undefined && returnUrl !== null && returnUrl !== "") {
+      if (typeof returnUrl !== "string" || !isAllowedReturnUrl(returnUrl)) {
+        throw new AppError(400, "Invalid returnUrl origin.")
+      }
+      targetOrigin = new URL(returnUrl).origin
+    } else {
+      targetOrigin = getDefaultReturnOrigin()
+    }
 
     // Check if user already has an associated Stripe customer
     const { data: subRecord } = await supabase
@@ -57,7 +63,6 @@ serve(async (req) => {
     let customerId = subRecord?.stripe_customer_id
 
     if (!customerId) {
-      // Find or create customer in Stripe
       const existingCustomers = await stripe.customers.list({
         email: user.email,
         limit: 1,
@@ -80,28 +85,25 @@ serve(async (req) => {
       ? Deno.env.get("STRIPE_PRICE_ANNUAL_ID")
       : Deno.env.get("STRIPE_PRICE_MONTHLY_ID")
 
-    let lineItems: any[]
-    if (priceId) {
-      lineItems = [{ price: priceId, quantity: 1 }]
-    } else {
-      // Dynamic inline price if pre-configured price ID is not set
-      lineItems = [
-        {
-          price_data: {
-            currency: "eur",
-            unit_amount: isAnnual ? 3499 : 399, // €34.99 / yr vs €3.99 / mo
-            recurring: {
-              interval: isAnnual ? "year" : "month",
+    const lineItems = priceId
+      ? [{ price: priceId, quantity: 1 }]
+      : [
+          {
+            price_data: {
+              currency: "eur",
+              unit_amount: isAnnual ? 3499 : 399,
+              recurring: {
+                interval: isAnnual ? "year" : "month",
+              },
+              product_data: {
+                name: `ScoreBoard Pro Organizer (${isAnnual ? "Annual" : "Monthly"})`,
+                description:
+                  "Unlimited tournament creation, referee management, custom branding, and fixture exports.",
+              },
             },
-            product_data: {
-              name: `ScoreBoard Pro Organizer (${isAnnual ? "Annual" : "Monthly"})`,
-              description: "Unlimited tournament creation, referee management, custom branding, and fixture exports.",
-            },
+            quantity: 1,
           },
-          quantity: 1,
-        },
-      ]
-    }
+        ]
 
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
@@ -113,19 +115,12 @@ serve(async (req) => {
         supabase_user_id: user.id,
         plan_type: isAnnual ? "annual" : "monthly",
       },
-      success_url: `${fallbackOrigin}/settings?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${fallbackOrigin}/settings?checkout=cancelled`,
+      success_url: `${targetOrigin}/settings?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${targetOrigin}/settings?checkout=cancelled`,
     })
 
-    return new Response(JSON.stringify({ url: session.url }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 200,
-    })
+    return jsonResponse({ url: session.url }, 200, corsHeaders)
   } catch (err) {
-    console.error("Error creating checkout session:", err)
-    return new Response(JSON.stringify({ error: err.message }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 500,
-    })
+    return handleEdgeError(err, "create-checkout-session", corsHeaders)
   }
 })

@@ -1,219 +1,274 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { getCorsHeaders, handleCorsPreflight } from "../_shared/cors.ts"
+import { AppError, handleEdgeError, jsonError, jsonResponse } from "../_shared/errors.ts"
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = handleCorsPreflight(req)
+  if (preflight) return preflight
+
+  const corsHeaders = getCorsHeaders(req)
 
   try {
-    const { matchId, setHistory } = await req.json()
-    
+    // Verify caller identity BEFORE querying the database (prevents pre-auth existence oracle)
+    const authHeader = req.headers.get("Authorization")
+    if (!authHeader) {
+      return jsonError(401, "Missing Authorization header", corsHeaders)
+    }
+
     const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     )
+
+    const token = authHeader.replace(/^Bearer\s+/i, "")
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
+    if (authError || !user) {
+      return jsonError(401, "Invalid or expired auth token", corsHeaders)
+    }
+
+    const { matchId, setHistory } = await req.json()
+    if (!matchId || !Array.isArray(setHistory)) {
+      throw new AppError(400, "Invalid request: matchId and setHistory are required.")
+    }
 
     // Fetch Match and Tournament Rules
     const { data: match, error: fetchError } = await supabase
-      .from('matches')
-      .select('*, tournaments(*)')
-      .eq('id', matchId)
+      .from("matches")
+      .select("*, tournaments(*)")
+      .eq("id", matchId)
       .single()
 
-    if (fetchError || !match) throw new Error(`Match not found: ${fetchError?.message || 'No record'}`)
-
-    // Verify caller identity (must be match umpire or organizer)
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Missing Authorization header' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 401,
-      })
-    }
-    const token = authHeader.replace(/^Bearer\s+/i, '')
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-    if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid or expired auth token' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 401,
-      })
-    }
-    if (match.status === 'completed') {
-      return new Response(JSON.stringify({ error: 'Conflict: Match is already completed' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 409,
-      })
+    if (fetchError || !match) {
+      throw new AppError(404, "Match not found.")
     }
 
     const isOrganizer = user.id === match.organizer_id
-    const isAcceptedUmpire = user.id === match.umpire_id && match.umpire_invite_status === 'accepted'
+    const isAcceptedUmpire = user.id === match.umpire_id && match.umpire_invite_status === "accepted"
 
     if (!isOrganizer && !isAcceptedUmpire) {
-      return new Response(JSON.stringify({ error: 'Forbidden: Only the match organizer or accepted umpire can finalize this match' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 403,
-      })
+      return jsonError(
+        403,
+        "Forbidden: Only the match organizer or accepted umpire can finalize this match",
+        corsHeaders
+      )
+    }
+
+    if (match.status === "completed") {
+      return jsonError(409, "Conflict: Match is already completed", corsHeaders)
     }
 
     // Priority: Match settings > Tournament Round overrides > Tournament Default settings
-    const tournamentSettings = match.tournaments?.settings || {};
-    const rules = (match.settings && Object.keys(match.settings).length > 0) ? match.settings : 
-                  (tournamentSettings.overrides?.[match.round_number] || 
-                   tournamentSettings.default || { max_sets: 3, points_per_set: 25 });
-    
+    const tournamentSettings = match.tournaments?.settings || {}
+    const rules =
+      match.settings && Object.keys(match.settings).length > 0
+        ? match.settings
+        : tournamentSettings.overrides?.[match.round_number] ||
+          tournamentSettings.default || { max_sets: 3, points_per_set: 25 }
+
     // 2. BACKEND VALIDATION
-    let t1Sets = 0, t2Sets = 0;
-    const maxSets = rules.max_sets || 3;
-    const setsToWin = Math.ceil(maxSets / 2);
+    let t1Sets = 0
+    let t2Sets = 0
+    const maxSets = rules.max_sets || 3
+    const setsToWin = Math.ceil(maxSets / 2)
 
     for (const set of setHistory) {
-      const p1 = set.team1, p2 = set.team2;
-      const target = rules.points_per_set || 25;
-      const cap = rules.point_cap;
-      const winnerScore = Math.max(p1, p2), loserScore = Math.min(p1, p2);
-      const lead = winnerScore - loserScore;
+      const p1 = set.team1
+      const p2 = set.team2
+      const target = rules.points_per_set || 25
+      const cap = rules.point_cap
+      const winnerScore = Math.max(p1, p2)
+      const loserScore = Math.min(p1, p2)
+      const lead = winnerScore - loserScore
 
       if (winnerScore < target && (!cap || winnerScore < cap)) {
-        throw new Error(`Set not finished: ${p1}-${p2}. Target is ${target}${cap ? ` (Cap: ${cap})` : ''}.`);
+        throw new AppError(
+          400,
+          `Set not finished: ${p1}-${p2}. Target is ${target}${cap ? ` (Cap: ${cap})` : ""}.`
+        )
       }
       if (cap && winnerScore === cap) {
-        if (p1 > cap || p2 > cap) throw new Error(`Score exceeds cap ${cap}.`);
+        if (p1 > cap || p2 > cap) {
+          throw new AppError(400, `Score exceeds cap ${cap}.`)
+        }
       } else {
-        if (lead < 2) throw new Error(`Must win by 2 unless Cap is reached.`);
-        if (winnerScore > target && lead !== 2) throw new Error(`Impossible score: ${p1}-${p2}.`);
+        if (lead < 2) {
+          throw new AppError(400, "Must win by 2 unless Cap is reached.")
+        }
+        if (winnerScore > target && lead !== 2) {
+          throw new AppError(400, `Impossible score: ${p1}-${p2}.`)
+        }
       }
-      if (p1 > p2) t1Sets++; else t2Sets++;
+      if (p1 > p2) t1Sets++
+      else t2Sets++
     }
 
     if (t1Sets < setsToWin && t2Sets < setsToWin) {
-      throw new Error(`Match not yet finished. Sets: ${t1Sets}-${t2Sets}. Need ${setsToWin} to win.`);
+      throw new AppError(
+        400,
+        `Match not yet finished. Sets: ${t1Sets}-${t2Sets}. Need ${setsToWin} to win.`
+      )
     }
 
     // 3. SECURE ADVANCEMENT
-    const winnerIdx = t1Sets > t2Sets ? 0 : 1;
-    const loserIdx = winnerIdx === 0 ? 1 : 0;
-    const winner = match.participants[winnerIdx];
-    const loser = match.participants[loserIdx];
+    const winnerIdx = t1Sets > t2Sets ? 0 : 1
+    const loserIdx = winnerIdx === 0 ? 1 : 0
+    const winner = match.participants?.[winnerIdx]
+    const loser = match.participants?.[loserIdx]
 
-    if (!winner) throw new Error("Could not determine winner from participants list.");
+    if (!winner) {
+      throw new AppError(400, "Could not determine winner from participants list.")
+    }
 
-    // Update current match
-    const { error: updateError } = await supabase.from('matches').update({
-      status: 'completed',
-      scores: { 
-        ...match.scores,
-        final_history: setHistory,
-        final_sets: [t1Sets, t2Sets] 
+    // Atomic conditional update prevents TOCTOU race where two concurrent requests both see non-completed
+    const { data: updatedMatch, error: updateError } = await supabase
+      .from("matches")
+      .update({
+        status: "completed",
+        scores: {
+          ...match.scores,
+          final_history: setHistory,
+          final_sets: [t1Sets, t2Sets],
+        },
+      })
+      .eq("id", matchId)
+      .neq("status", "completed")
+      .select("id")
+      .maybeSingle()
+
+    if (updateError) {
+      console.error("[finalize-match] Failed to update match:", updateError)
+      throw new AppError(500, "Failed to update match.")
+    }
+
+    if (!updatedMatch) {
+      return jsonError(409, "Conflict: Match is already completed", corsHeaders)
+    }
+
+    const advanceSlot = async (
+      targetMatchId: string,
+      slotIdx: number | null,
+      participant: unknown,
+      findEmptySlot = false
+    ) => {
+      const { error: rpcErr } = await supabase.rpc("set_match_participant_slot", {
+        p_match_id: targetMatchId,
+        p_slot_idx: slotIdx,
+        p_participant: participant,
+        p_find_empty_slot: findEmptySlot,
+      })
+      if (rpcErr) {
+        console.error("[finalize-match] Failed to advance participant:", rpcErr)
+        throw new AppError(500, "Failed to advance bracket participant.")
       }
-    }).eq('id', matchId)
+    }
 
-    if (updateError) throw new Error(`Failed to update match: ${updateError.message}`);
-
-    const tournamentType = match.tournaments?.settings?.stage_1?.type;
+    const tournamentType = match.tournaments?.settings?.stage_1?.type
 
     // --- CASE A: WINNERS BRACKET (DOUBLE ELIMINATION) ---
-    if (match.bracket_type === 'main' && tournamentType === 'double_elimination') {
-      // 1. Winner advances in Winners Bracket
-      const nextRound = match.round_number + 1;
-      const nextOrder = Math.ceil(match.match_order / 2);
-      const { data: nextWinnersMatch } = await supabase.from('matches')
-        .select('*').eq('tournament_id', match.tournament_id).eq('bracket_type', 'main')
-        .eq('round_number', nextRound).eq('match_order', nextOrder).single();
+    if (match.bracket_type === "main" && tournamentType === "double_elimination") {
+      const nextRound = match.round_number + 1
+      const nextOrder = Math.ceil(match.match_order / 2)
+      const { data: nextWinnersMatch } = await supabase
+        .from("matches")
+        .select("id")
+        .eq("tournament_id", match.tournament_id)
+        .eq("bracket_type", "main")
+        .eq("round_number", nextRound)
+        .eq("match_order", nextOrder)
+        .maybeSingle()
 
       if (nextWinnersMatch) {
-        const slotIdx = match.match_order % 2 === 1 ? 0 : 1;
-        const updatedParticipants = [...nextWinnersMatch.participants];
-        updatedParticipants[slotIdx] = winner;
-        await supabase.from('matches').update({ participants: updatedParticipants }).eq('id', nextWinnersMatch.id);
+        const slotIdx = match.match_order % 2 === 1 ? 0 : 1
+        await advanceSlot(nextWinnersMatch.id, slotIdx, winner)
       } else {
-        // Advance to Grand Final top slot
-        const { data: grandFinal } = await supabase.from('matches')
-          .select('*').eq('tournament_id', match.tournament_id).eq('bracket_type', 'grand_final').single();
+        const { data: grandFinal } = await supabase
+          .from("matches")
+          .select("id")
+          .eq("tournament_id", match.tournament_id)
+          .eq("bracket_type", "grand_final")
+          .maybeSingle()
         if (grandFinal) {
-          const updatedParticipants = [...grandFinal.participants];
-          updatedParticipants[0] = winner;
-          await supabase.from('matches').update({ participants: updatedParticipants }).eq('id', grandFinal.id);
+          await advanceSlot(grandFinal.id, 0, winner)
         }
       }
 
-      // 2. Loser drops to Losers Bracket (Loser's Flight)
-      let destinationRound: number;
-      let destinationOrder: number;
+      // 2. Loser drops to Losers Bracket
+      let destinationRound: number
+      let destinationOrder: number
 
       if (match.round_number === 1) {
-        destinationRound = 1;
-        destinationOrder = Math.ceil(match.match_order / 2); // WR1 (8 matches) -> LR1 (4 matches)
+        destinationRound = 1
+        destinationOrder = Math.ceil(match.match_order / 2)
       } else {
-        destinationRound = (match.round_number * 2) - 2;
-        destinationOrder = match.match_order;
+        destinationRound = match.round_number * 2 - 2
+        destinationOrder = match.match_order
       }
 
-      const { data: losersMatch } = await supabase.from('matches')
-        .select('*').eq('tournament_id', match.tournament_id).eq('bracket_type', 'losers')
-        .eq('round_number', destinationRound).eq('match_order', destinationOrder).single();
+      const { data: losersMatch } = await supabase
+        .from("matches")
+        .select("id")
+        .eq("tournament_id", match.tournament_id)
+        .eq("bracket_type", "losers")
+        .eq("round_number", destinationRound)
+        .eq("match_order", destinationOrder)
+        .maybeSingle()
 
-      if (losersMatch) {
-        const updatedParticipants = [...losersMatch.participants];
-        const slotIdx = updatedParticipants[0] ? 1 : 0;
-        updatedParticipants[slotIdx] = loser;
-        await supabase.from('matches').update({ participants: updatedParticipants }).eq('id', losersMatch.id);
+      if (losersMatch && loser) {
+        await advanceSlot(losersMatch.id, null, loser, true)
       }
     }
     // --- CASE B: LOSERS BRACKET (DOUBLE ELIMINATION) ---
-    else if (match.bracket_type === 'losers' && tournamentType === 'double_elimination') {
-      const nextRound = match.round_number + 1;
-      const isDroppingInRound = match.round_number % 2 === 1;
-      const nextOrder = isDroppingInRound ? match.match_order : Math.ceil(match.match_order / 2);
+    else if (match.bracket_type === "losers" && tournamentType === "double_elimination") {
+      const nextRound = match.round_number + 1
+      const isDroppingInRound = match.round_number % 2 === 1
+      const nextOrder = isDroppingInRound ? match.match_order : Math.ceil(match.match_order / 2)
 
-      const { data: nextLosersMatch } = await supabase.from('matches')
-        .select('*').eq('tournament_id', match.tournament_id).eq('bracket_type', 'losers')
-        .eq('round_number', nextRound).eq('match_order', nextOrder).single();
+      const { data: nextLosersMatch } = await supabase
+        .from("matches")
+        .select("id")
+        .eq("tournament_id", match.tournament_id)
+        .eq("bracket_type", "losers")
+        .eq("round_number", nextRound)
+        .eq("match_order", nextOrder)
+        .maybeSingle()
 
       if (nextLosersMatch) {
-        const slotIdx = isDroppingInRound ? 1 : (match.match_order % 2 === 1 ? 0 : 1);
-        const updatedParticipants = [...nextLosersMatch.participants];
-        updatedParticipants[slotIdx] = winner;
-        await supabase.from('matches').update({ participants: updatedParticipants }).eq('id', nextLosersMatch.id);
+        const slotIdx = isDroppingInRound ? 1 : match.match_order % 2 === 1 ? 0 : 1
+        await advanceSlot(nextLosersMatch.id, slotIdx, winner)
       } else {
-        // Losers Bracket Finished -> Advance to Grand Final bottom slot
-        const { data: grandFinal } = await supabase.from('matches')
-          .select('*').eq('tournament_id', match.tournament_id).eq('bracket_type', 'grand_final').single();
+        const { data: grandFinal } = await supabase
+          .from("matches")
+          .select("id")
+          .eq("tournament_id", match.tournament_id)
+          .eq("bracket_type", "grand_final")
+          .maybeSingle()
         if (grandFinal) {
-          const updatedParticipants = [...grandFinal.participants];
-          updatedParticipants[1] = winner;
-          await supabase.from('matches').update({ participants: updatedParticipants }).eq('id', grandFinal.id);
+          await advanceSlot(grandFinal.id, 1, winner)
         }
       }
     }
     // --- CASE C: SINGLE ELIMINATION / MAIN ---
     else {
-      const nextRound = match.round_number + 1;
-      const nextOrder = Math.ceil(match.match_order / 2);
-      const { data: nextMatch } = await supabase.from('matches')
-        .select('*').eq('tournament_id', match.tournament_id).eq('bracket_type', match.bracket_type)
-        .eq('round_number', nextRound).eq('match_order', nextOrder).single();
+      const nextRound = match.round_number + 1
+      const nextOrder = Math.ceil(match.match_order / 2)
+      const { data: nextMatch } = await supabase
+        .from("matches")
+        .select("id")
+        .eq("tournament_id", match.tournament_id)
+        .eq("bracket_type", match.bracket_type)
+        .eq("round_number", nextRound)
+        .eq("match_order", nextOrder)
+        .maybeSingle()
 
       if (nextMatch) {
-        const slotIdx = match.match_order % 2 === 1 ? 0 : 1;
-        const updatedParticipants = [...nextMatch.participants];
-        updatedParticipants[slotIdx] = winner;
-        await supabase.from('matches').update({ participants: updatedParticipants }).eq('id', nextMatch.id);
+        const slotIdx = match.match_order % 2 === 1 ? 0 : 1
+        await advanceSlot(nextMatch.id, slotIdx, winner)
       }
     }
 
-    return new Response(JSON.stringify({ success: true }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200
-    })
-
+    return jsonResponse({ success: true }, 200, corsHeaders)
   } catch (err) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400
-    })
+    return handleEdgeError(err, "finalize-match", corsHeaders)
   }
 })

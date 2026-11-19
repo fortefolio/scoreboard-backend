@@ -27,7 +27,8 @@ serve(async (req) => {
       undefined
     )
   } catch (err) {
-    return new Response(`Webhook Error: ${err.message}`, { status: 400 })
+    console.error("[stripe-webhook] Signature verification failed:", err)
+    return new Response("Invalid webhook signature.", { status: 400 })
   }
 
   // Use service role key to bypass RLS for tier and subscription updates
@@ -235,7 +236,7 @@ serve(async (req) => {
     }
   } catch (err) {
     console.error(`Error processing webhook event ${event.type}:`, err)
-    return new Response(`Processing error: ${err.message}`, { status: 500 })
+    return new Response("Internal webhook processing error.", { status: 500 })
   }
 
   return new Response(JSON.stringify({ received: true }), {

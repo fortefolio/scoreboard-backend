@@ -1,66 +1,57 @@
 // supabase/functions/advance-to-knockout/index.ts
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
+import { getCorsHeaders, handleCorsPreflight } from "../_shared/cors.ts"
+import { AppError, handleEdgeError, jsonError, jsonResponse } from "../_shared/errors.ts"
 
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  const preflight = handleCorsPreflight(req)
+  if (preflight) return preflight
+
+  const corsHeaders = getCorsHeaders(req)
 
   try {
-    const { tournamentId } = await req.json()
-    if (!tournamentId) {
-      throw new Error('Missing tournamentId')
+    const authHeader = req.headers.get("Authorization")
+    if (!authHeader) {
+      return jsonError(401, "Missing Authorization header", corsHeaders)
     }
 
     const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     )
 
-    // Verify caller identity and organizer ownership
-    const authHeader = req.headers.get('Authorization')
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Missing Authorization header' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 401,
-      })
-    }
-    const token = authHeader.replace(/^Bearer\s+/i, '')
+    const token = authHeader.replace(/^Bearer\s+/i, "")
     const { data: { user }, error: authError } = await supabase.auth.getUser(token)
     if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid or expired auth token' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 401,
-      })
+      return jsonError(401, "Invalid or expired auth token", corsHeaders)
+    }
+
+    const { tournamentId } = await req.json()
+    if (!tournamentId) {
+      throw new AppError(400, "Missing tournamentId")
     }
 
     const { data: tournament, error: tError } = await supabase
-      .from('tournaments')
-      .select('id, organizer_id, sport_type, settings')
-      .eq('id', tournamentId)
+      .from("tournaments")
+      .select("id, organizer_id, sport_type, settings")
+      .eq("id", tournamentId)
       .single()
 
     if (tError || !tournament) {
-      throw new Error(`Tournament not found: ${tError?.message || 'No record'}`)
+      throw new AppError(404, "Tournament not found")
     }
     if (tournament.organizer_id !== user.id) {
-      return new Response(JSON.stringify({ error: 'Forbidden: Only the tournament organizer can advance to knockout' }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 403,
-      })
+      return jsonError(403, "Forbidden: Only the tournament organizer can advance to knockout", corsHeaders)
     }
 
     // 1. Fetch the standings from the SQL View
     const { data: standings, error } = await supabase
-      .from('group_standings')
-      .select('*')
-      .eq('tournament_id', tournamentId)
+      .from("group_standings")
+      .select("*")
+      .eq("tournament_id", tournamentId)
 
     if (error || !standings || standings.length < 2) {
-      throw new Error(`Insufficient group standings to generate knockout bracket`)
+      throw new AppError(400, "Insufficient group standings to generate knockout bracket")
     }
 
     // 2. GET DIRECT QUALIFIERS (Top N from each group)
@@ -109,8 +100,8 @@ Deno.serve(async (req) => {
         round_number: 1,
         match_order: i + 1,
         participants,
-        status: 'scheduled',
-        bracket_type: 'main',
+        status: "scheduled",
+        bracket_type: "main",
       })
     }
 
@@ -124,24 +115,21 @@ Deno.serve(async (req) => {
           round_number: r,
           match_order: m,
           participants: [],
-          status: 'scheduled',
-          bracket_type: 'main',
+          status: "scheduled",
+          bracket_type: "main",
         })
       }
       currentRoundSize /= 2
     }
 
-    const { error: insertError } = await supabase.from('matches').insert(knockoutMatches)
-    if (insertError) throw insertError
+    const { error: insertError } = await supabase.from("matches").insert(knockoutMatches)
+    if (insertError) {
+      console.error("[advance-to-knockout] Failed to insert knockout matches:", insertError)
+      throw new AppError(500, "Failed to create knockout matches.")
+    }
 
-    return new Response(JSON.stringify({ success: true, matches_created: knockoutMatches.length }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 200,
-    })
-  } catch (err: any) {
-    return new Response(JSON.stringify({ error: err.message }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      status: 400,
-    })
+    return jsonResponse({ success: true, matches_created: knockoutMatches.length }, 200, corsHeaders)
+  } catch (err) {
+    return handleEdgeError(err, "advance-to-knockout", corsHeaders)
   }
 })

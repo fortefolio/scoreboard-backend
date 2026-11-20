@@ -110,6 +110,17 @@ serve(async (req) => {
     badgeCount: unreadCount ?? 1,
   });
 
+  if (summary.invalidTokens.length > 0) {
+    const { error: cleanupError } = await supabase
+      .from("user_tokens")
+      .delete()
+      .eq("user_id", userId)
+      .in("fcm_token", summary.invalidTokens);
+    if (cleanupError) {
+      console.error("Failed to prune invalid push tokens:", cleanupError);
+    }
+  }
+
   console.info("Push dispatch summary", {
     userId,
     tokens: tokens.length,

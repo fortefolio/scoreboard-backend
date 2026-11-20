@@ -26,6 +26,7 @@ export interface DispatchSummary {
   fcmSent: number;
   apnsSent: number;
   apnsSandboxFallback: number;
+  invalidTokens: string[];
   errors: string[];
 }
 
@@ -151,7 +152,7 @@ async function sendApnsSingle(
   bundleId: string,
   fetchFn: typeof fetch,
   badgeCount?: number
-): Promise<{ ok: boolean; sandboxFallback: boolean; error?: string }> {
+): Promise<{ ok: boolean; sandboxFallback: boolean; invalidToken?: boolean; error?: string }> {
   const aps: Record<string, any> = {
     alert: {
       title: notification.title ?? "",
@@ -207,9 +208,16 @@ async function sendApnsSingle(
       return { ok: true, sandboxFallback: true };
     }
     const sandboxBody = await sandboxRes.text().catch(() => "");
+    let sandboxReason = "";
+    try {
+      sandboxReason = JSON.parse(sandboxBody)?.reason ?? "";
+    } catch {
+      // ignore parse failure
+    }
     return {
       ok: false,
       sandboxFallback: true,
+      invalidToken: sandboxRes.status === 410 || sandboxReason === "BadDeviceToken" || sandboxReason === "Unregistered",
       error: `APNs sandbox error (${sandboxRes.status}): ${sandboxBody}`,
     };
   }
@@ -217,6 +225,7 @@ async function sendApnsSingle(
   return {
     ok: false,
     sandboxFallback: false,
+    invalidToken: prodRes.status === 410 || prodReason === "Unregistered",
     error: `APNs prod error (${prodRes.status}): ${prodBodyText}`,
   };
 }
@@ -235,6 +244,7 @@ export async function dispatchPushNotifications(
     fcmSent: 0,
     apnsSent: 0,
     apnsSandboxFallback: 0,
+    invalidTokens: [],
     errors: [],
   };
 
@@ -272,6 +282,9 @@ export async function dispatchPushNotifications(
             summary.fcmSent += 1;
           } else {
             const errText = await res.text().catch(() => "");
+            if (res.status === 404 || errText.includes("UNREGISTERED")) {
+              summary.invalidTokens.push(token);
+            }
             summary.errors.push(`FCM error (${res.status}): ${errText}`);
           }
         })
@@ -301,8 +314,13 @@ export async function dispatchPushNotifications(
           }
           if (result.ok) {
             summary.apnsSent += 1;
-          } else if (result.error) {
-            summary.errors.push(result.error);
+          } else {
+            if (result.invalidToken) {
+              summary.invalidTokens.push(token);
+            }
+            if (result.error) {
+              summary.errors.push(result.error);
+            }
           }
         })
       );

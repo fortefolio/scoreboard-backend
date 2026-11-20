@@ -62,6 +62,11 @@ serve(async (req) => {
   const payload: WebhookPayload = await req.json();
 
   if (!shouldDispatchWebhook(payload)) {
+    console.info("Notification event ignored", {
+      type: payload.type,
+      table: payload.table,
+      read_at: payload.record?.read_at ?? null,
+    });
     return new Response("Notification event ignored", { status: 200 });
   }
 
@@ -95,6 +100,12 @@ serve(async (req) => {
     fcmProjectId: serviceAccount?.project_id,
     getFcmAccessToken: serviceAccount ? () => getAccessToken(serviceAccount) : undefined,
     apnsConfig,
+  });
+
+  console.info("Push dispatch summary", {
+    userId,
+    tokens: tokens.length,
+    ...summary,
   });
 
   if (summary.errors.length > 0) {

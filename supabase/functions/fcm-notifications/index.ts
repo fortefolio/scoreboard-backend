@@ -19,6 +19,17 @@ const getAccessToken = async (serviceAccount: any) => {
   return tokens.access_token;
 };
 
+function loadFcmServiceAccount(): Record<string, any> | null {
+  const raw = Deno.env.get("FIREBASE_SERVICE_ACCOUNT")?.trim();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error("Invalid FIREBASE_SERVICE_ACCOUNT JSON:", err);
+    return null;
+  }
+}
+
 function loadApnsConfig(): ApnsConfig | null {
   const keyId = Deno.env.get("APNS_KEY_ID")?.trim() ?? "";
   const teamId = Deno.env.get("APNS_TEAM_ID")?.trim() ?? "";
@@ -77,12 +88,12 @@ serve(async (req) => {
     return new Response("No tokens found for user", { status: 200 });
   }
 
-  const serviceAccount = JSON.parse(Deno.env.get("FIREBASE_SERVICE_ACCOUNT") ?? "{}");
+  const serviceAccount = loadFcmServiceAccount();
   const apnsConfig = loadApnsConfig();
 
   const summary = await dispatchPushNotifications(tokens, notification, {
-    fcmProjectId: serviceAccount.project_id,
-    getFcmAccessToken: () => getAccessToken(serviceAccount),
+    fcmProjectId: serviceAccount?.project_id,
+    getFcmAccessToken: serviceAccount ? () => getAccessToken(serviceAccount) : undefined,
     apnsConfig,
   });
 

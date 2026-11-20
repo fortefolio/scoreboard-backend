@@ -78,10 +78,17 @@ serve(async (req) => {
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
   );
 
-  const { data: tokenData, error: tokenError } = await supabase
-    .from("user_tokens")
-    .select("fcm_token")
-    .eq("user_id", userId);
+  const [{ data: tokenData, error: tokenError }, { count: unreadCount }] = await Promise.all([
+    supabase
+      .from("user_tokens")
+      .select("fcm_token")
+      .eq("user_id", userId),
+    supabase
+      .from("notifications")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .is("read_at", null),
+  ]);
 
   if (tokenError || !tokenData) {
     console.error("Error fetching tokens:", tokenError);
@@ -100,6 +107,7 @@ serve(async (req) => {
     fcmProjectId: serviceAccount?.project_id,
     getFcmAccessToken: serviceAccount ? () => getAccessToken(serviceAccount) : undefined,
     apnsConfig,
+    badgeCount: unreadCount ?? 1,
   });
 
   console.info("Push dispatch summary", {

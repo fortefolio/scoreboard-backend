@@ -18,6 +18,7 @@ export interface DispatchDependencies {
   getFcmAccessToken?: () => Promise<string>;
   fcmProjectId?: string;
   apnsConfig?: ApnsConfig | null;
+  badgeCount?: number;
   nowSeconds?: () => number;
 }
 
@@ -148,16 +149,22 @@ async function sendApnsSingle(
   notification: Record<string, any>,
   apnsJwt: string,
   bundleId: string,
-  fetchFn: typeof fetch
+  fetchFn: typeof fetch,
+  badgeCount?: number
 ): Promise<{ ok: boolean; sandboxFallback: boolean; error?: string }> {
-  const payload = JSON.stringify({
-    aps: {
-      alert: {
-        title: notification.title ?? "",
-        body: notification.body ?? "",
-      },
-      sound: "default",
+  const aps: Record<string, any> = {
+    alert: {
+      title: notification.title ?? "",
+      body: notification.body ?? "",
     },
+    sound: "default",
+  };
+  if (typeof badgeCount === "number" && Number.isFinite(badgeCount)) {
+    aps.badge = Math.max(0, Math.floor(badgeCount));
+  }
+
+  const payload = JSON.stringify({
+    aps,
     ...(notification.data && typeof notification.data === "object" ? notification.data : {}),
     notification_id: notification.id,
   });
@@ -286,7 +293,8 @@ export async function dispatchPushNotifications(
             notification,
             apnsJwt,
             deps.apnsConfig!.bundleId,
-            fetchFn
+            fetchFn,
+            deps.badgeCount
           );
           if (result.sandboxFallback) {
             summary.apnsSandboxFallback += 1;

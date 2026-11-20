@@ -42,11 +42,40 @@ BEGIN
         v_team2_name := COALESCE(NEW.participants->1->>'name', 'Team 2');
     END IF;
 
-    -- Extract set-based scores (sets or set_scores)
-    IF NEW.scores ? 'sets' AND jsonb_typeof(NEW.scores->'sets') = 'array' THEN
-        v_sets := NEW.scores->'sets';
-    ELSIF NEW.scores ? 'set_scores' AND jsonb_typeof(NEW.scores->'set_scores') = 'array' THEN
+    -- Extract non-empty set-based scores (tennis.sets, padel.sets, set_scores, sets)
+    IF NEW.scores->'tennis' ? 'sets' AND jsonb_typeof(NEW.scores->'tennis'->'sets') = 'array' AND jsonb_array_length(NEW.scores->'tennis'->'sets') > 0 THEN
+        v_sets := NEW.scores->'tennis'->'sets';
+    ELSIF NEW.scores->'padel' ? 'sets' AND jsonb_typeof(NEW.scores->'padel'->'sets') = 'array' AND jsonb_array_length(NEW.scores->'padel'->'sets') > 0 THEN
+        v_sets := NEW.scores->'padel'->'sets';
+    ELSIF NEW.scores ? 'set_scores' AND jsonb_typeof(NEW.scores->'set_scores') = 'array' AND jsonb_array_length(NEW.scores->'set_scores') > 0 THEN
         v_sets := NEW.scores->'set_scores';
+    ELSIF NEW.scores ? 'sets' AND jsonb_typeof(NEW.scores->'sets') = 'array' AND jsonb_array_length(NEW.scores->'sets') > 0 THEN
+        v_sets := NEW.scores->'sets';
+    END IF;
+
+    -- Always extract current points/goals if present (used for football/basketball AND live set score)
+    v_new_s1 := NULLIF(COALESCE(
+        NEW.scores->'current'->>'home',
+        NEW.scores->>'home',
+        NEW.scores->>'team1'
+    ), '')::INT;
+    v_new_s2 := NULLIF(COALESCE(
+        NEW.scores->'current'->>'away',
+        NEW.scores->>'away',
+        NEW.scores->>'team2'
+    ), '')::INT;
+
+    IF TG_OP = 'UPDATE' AND OLD.scores IS NOT NULL THEN
+        v_old_s1 := NULLIF(COALESCE(
+            OLD.scores->'current'->>'home',
+            OLD.scores->>'home',
+            OLD.scores->>'team1'
+        ), '')::INT;
+        v_old_s2 := NULLIF(COALESCE(
+            OLD.scores->'current'->>'away',
+            OLD.scores->>'away',
+            OLD.scores->>'team2'
+        ), '')::INT;
     END IF;
 
     IF v_sets IS NOT NULL THEN
@@ -59,38 +88,13 @@ BEGIN
             END IF;
             v_set_str := v_set_str || v_s1 || '-' || v_s2;
         END LOOP;
-        IF v_set_str <> '' THEN
+        IF v_new_s1 IS NOT NULL AND v_new_s2 IS NOT NULL THEN
+            v_body := v_team1_name || ' vs ' || v_team2_name || ' · Sets: ' || v_set_str || ' (' || v_new_s1 || '-' || v_new_s2 || ')';
+        ELSE
             v_body := v_team1_name || ' vs ' || v_team2_name || ' · Score: ' || v_set_str;
         END IF;
-    ELSE
-        -- Extract current points/goals score from scores.current.home/away or top-level keys
-        v_new_s1 := NULLIF(COALESCE(
-            NEW.scores->'current'->>'home',
-            NEW.scores->>'home',
-            NEW.scores->>'team1'
-        ), '')::INT;
-        v_new_s2 := NULLIF(COALESCE(
-            NEW.scores->'current'->>'away',
-            NEW.scores->>'away',
-            NEW.scores->>'team2'
-        ), '')::INT;
-
-        IF TG_OP = 'UPDATE' AND OLD.scores IS NOT NULL THEN
-            v_old_s1 := NULLIF(COALESCE(
-                OLD.scores->'current'->>'home',
-                OLD.scores->>'home',
-                OLD.scores->>'team1'
-            ), '')::INT;
-            v_old_s2 := NULLIF(COALESCE(
-                OLD.scores->'current'->>'away',
-                OLD.scores->>'away',
-                OLD.scores->>'team2'
-            ), '')::INT;
-        END IF;
-
-        IF v_new_s1 IS NOT NULL AND v_new_s2 IS NOT NULL THEN
-            v_body := v_team1_name || ' ' || v_new_s1 || ' - ' || v_new_s2 || ' ' || v_team2_name;
-        END IF;
+    ELSIF v_new_s1 IS NOT NULL AND v_new_s2 IS NOT NULL THEN
+        v_body := v_team1_name || ' ' || v_new_s1 || ' - ' || v_new_s2 || ' ' || v_team2_name;
     END IF;
 
     -- Build specific notification title
@@ -98,9 +102,9 @@ BEGIN
         v_title := 'Match Ended: ' || v_team1_name || ' vs ' || v_team2_name;
     ELSIF v_new_s1 IS NOT NULL AND v_new_s2 IS NOT NULL AND v_old_s1 IS NOT NULL AND v_old_s2 IS NOT NULL THEN
         IF v_new_s1 > v_old_s1 AND v_new_s2 = v_old_s2 THEN
-            v_title := CASE WHEN NEW.sport_type = 'football' THEN 'Goal for ' ELSE 'Score for ' END || v_team1_name || '!';
+            v_title := CASE WHEN LOWER(COALESCE(NEW.sport_type, '')) = 'football' THEN 'Goal for ' ELSE 'Score for ' END || v_team1_name || '!';
         ELSIF v_new_s2 > v_old_s2 AND v_new_s1 = v_old_s1 THEN
-            v_title := CASE WHEN NEW.sport_type = 'football' THEN 'Goal for ' ELSE 'Score for ' END || v_team2_name || '!';
+            v_title := CASE WHEN LOWER(COALESCE(NEW.sport_type, '')) = 'football' THEN 'Goal for ' ELSE 'Score for ' END || v_team2_name || '!';
         ELSE
             v_title := 'Score Update: ' || v_team1_name || ' vs ' || v_team2_name;
         END IF;

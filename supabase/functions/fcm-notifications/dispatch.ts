@@ -254,9 +254,36 @@ export async function dispatchPushNotifications(
     } else {
       const accessToken = await deps.getFcmAccessToken();
       const stringData = stringifyDataMap(notification.data, notification.id);
+      const collapseKey =
+        typeof notification.data?.collapse_key === "string" &&
+        notification.data.collapse_key.trim().length > 0
+          ? notification.data.collapse_key.trim()
+          : null;
 
       await Promise.all(
         fcmTokens.map(async (token) => {
+          const messagePayload: Record<string, unknown> = {
+            token,
+            notification: {
+              title: notification.title ?? "",
+              body: notification.body ?? "",
+            },
+            data: stringData,
+          };
+
+          if (collapseKey) {
+            messagePayload.android = {
+              notification: {
+                tag: collapseKey,
+              },
+            };
+            messagePayload.apns = {
+              headers: {
+                "apns-collapse-id": collapseKey,
+              },
+            };
+          }
+
           const res = await fetchFn(
             `https://fcm.googleapis.com/v1/projects/${deps.fcmProjectId}/messages:send`,
             {
@@ -266,14 +293,7 @@ export async function dispatchPushNotifications(
                 Authorization: `Bearer ${accessToken}`,
               },
               body: JSON.stringify({
-                message: {
-                  token,
-                  notification: {
-                    title: notification.title ?? "",
-                    body: notification.body ?? "",
-                  },
-                  data: stringData,
-                },
+                message: messagePayload,
               }),
             }
           );

@@ -85,6 +85,8 @@ DECLARE
     v_games_or_points_changed BOOLEAN := FALSE;
     v_cards_changed BOOLEAN := FALSE;
     v_quarter_changed BOOLEAN := FALSE;
+    v_is_milestone BOOLEAN := FALSE;
+    v_period TEXT;
 
     -- Per-follower preference checks
     v_prefs JSONB;
@@ -198,8 +200,8 @@ BEGIN
     IF v_sets IS NOT NULL THEN
         FOR v_set IN SELECT * FROM jsonb_array_elements(v_sets)
         LOOP
-            v_s1 := COALESCE(v_set->>'team1', v_set->>'home', '0');
-            v_s2 := COALESCE(v_set->>'team2', v_set->>'away', '0');
+            v_s1 := COALESCE(v_set->>0, v_set->>'team1', v_set->>'home', '0');
+            v_s2 := COALESCE(v_set->>1, v_set->>'team2', v_set->>'away', '0');
             IF v_set_str <> '' THEN
                 v_set_str := v_set_str || ', ';
             END IF;
@@ -214,11 +216,28 @@ BEGIN
         v_body := v_team1_name || ' ' || v_new_s1 || ' - ' || v_new_s2 || ' ' || v_team2_name;
     END IF;
 
+    v_period := NEW.scores->'basketball'->>'period';
+    IF v_sport = 'basketball' AND v_period IS NOT NULL AND NOT v_is_match_started AND NOT v_is_match_ended THEN
+        v_body := COALESCE(v_body, v_team1_name || ' vs ' || v_team2_name) || ' · ' || v_period;
+    ELSIF v_is_match_ended AND v_body <> '' THEN
+        v_body := v_body || ' · Final';
+    ELSIF v_is_match_started THEN
+        v_body := 'Match is now live';
+    END IF;
+
     -- Build specific notification title
     IF v_is_match_ended THEN
         v_title := 'Match Ended: ' || v_team1_name || ' vs ' || v_team2_name;
     ELSIF v_is_match_started THEN
         v_title := 'Match Started: ' || v_team1_name || ' vs ' || v_team2_name;
+    ELSIF v_sport = 'basketball' AND v_quarter_changed AND NOT v_games_or_points_changed THEN
+        v_title := COALESCE(v_period, 'Period') || ' Started: ' || v_team1_name || ' vs ' || v_team2_name;
+    ELSIF v_sport = 'football' AND v_cards_changed AND NOT v_games_or_points_changed THEN
+        IF (NEW.scores->'football'->'red_cards' IS DISTINCT FROM OLD.scores->'football'->'red_cards') THEN
+            v_title := 'Red Card: ' || v_team1_name || ' vs ' || v_team2_name;
+        ELSE
+            v_title := 'Yellow Card: ' || v_team1_name || ' vs ' || v_team2_name;
+        END IF;
     ELSIF v_new_s1 IS NOT NULL AND v_new_s2 IS NOT NULL AND v_old_s1 IS NOT NULL AND v_old_s2 IS NOT NULL THEN
         IF v_new_s1 > v_old_s1 AND v_new_s2 = v_old_s2 THEN
             v_title := CASE WHEN v_sport = 'football' THEN 'Goal for ' ELSE 'Score for ' END || v_team1_name || '!';
@@ -230,6 +249,14 @@ BEGIN
     ELSE
         v_title := 'Score Update: ' || v_team1_name || ' vs ' || v_team2_name;
     END IF;
+
+    -- Milestones create their own row; high-frequency live updates collapse into 1 live row per match
+    v_is_milestone := (
+        v_is_match_started
+        OR v_is_match_ended
+        OR (v_sport = 'football' AND (v_games_or_points_changed OR v_cards_changed))
+        OR (v_sport IN ('tennis', 'padel', 'volleyball', 'beach_volleyball') AND v_sets_changed)
+    );
 
     v_data := jsonb_build_object(
         'match_id', NEW.id,
@@ -244,6 +271,10 @@ BEGIN
         'sport_type', NEW.sport_type,
         'scores', NEW.scores
     );
+
+    IF NOT v_is_milestone THEN
+        v_data := v_data || jsonb_build_object('collapse_key', 'match_' || NEW.id || '_live');
+    END IF;
 
     -- Iterate over followers while enforcing private tournament isolation & notification preferences
     FOR r_follower IN
@@ -300,13 +331,7 @@ BEGIN
             ELSE
                 v_fb_goals := COALESCE((v_prefs->>'football_goals')::BOOLEAN, TRUE);
                 v_fb_cards := COALESCE((v_prefs->>'football_cards')::BOOLEAN, TRUE);
-                IF v_cards_changed AND NOT v_games_or_points_changed THEN
-                    v_should_notify := v_fb_cards;
-                ELSIF v_games_or_points_changed AND NOT v_cards_changed THEN
-                    v_should_notify := v_fb_goals;
-                ELSE
-                    v_should_notify := v_fb_goals OR v_fb_cards;
-                END IF;
+                v_should_notify := (v_games_or_points_changed AND v_fb_goals) OR (v_cards_changed AND v_fb_cards);
             END IF;
         ELSIF v_sport = 'basketball' THEN
             IF NOT COALESCE((v_prefs->>'basketball_enabled')::BOOLEAN, TRUE) THEN
@@ -314,13 +339,7 @@ BEGIN
             ELSE
                 v_bb_points := COALESCE((v_prefs->>'basketball_points')::BOOLEAN, TRUE);
                 v_bb_quarters := COALESCE((v_prefs->>'basketball_quarters')::BOOLEAN, TRUE);
-                IF v_quarter_changed AND NOT v_games_or_points_changed THEN
-                    v_should_notify := v_bb_quarters;
-                ELSIF v_games_or_points_changed AND NOT v_quarter_changed THEN
-                    v_should_notify := v_bb_points;
-                ELSE
-                    v_should_notify := v_bb_points OR v_bb_quarters;
-                END IF;
+                v_should_notify := (v_games_or_points_changed AND v_bb_points) OR (v_quarter_changed AND v_bb_quarters);
             END IF;
         END IF;
 
@@ -328,24 +347,30 @@ BEGIN
             CONTINUE;
         END IF;
 
-        SELECT id INTO v_existing_id
-        FROM public.notifications
-        WHERE user_id = r_follower.user_id
-          AND ((data->>'match_id') = NEW.id::text OR (data->>'matchId') = NEW.id::text)
-        ORDER BY created_at DESC
-        LIMIT 1;
-
-        IF v_existing_id IS NOT NULL THEN
-            UPDATE public.notifications
-            SET title = v_title,
-                body = v_body,
-                data = v_data,
-                read_at = NULL,
-                created_at = pg_catalog.now()
-            WHERE id = v_existing_id;
-        ELSE
+        IF v_is_milestone THEN
             INSERT INTO public.notifications (user_id, title, body, data, created_at)
             VALUES (r_follower.user_id, v_title, v_body, v_data, pg_catalog.now());
+        ELSE
+            SELECT id INTO v_existing_id
+            FROM public.notifications
+            WHERE user_id = r_follower.user_id
+              AND ((data->>'match_id') = NEW.id::text OR (data->>'matchId') = NEW.id::text)
+              AND (data->>'type') = 'score_update'
+            ORDER BY created_at DESC
+            LIMIT 1;
+
+            IF v_existing_id IS NOT NULL THEN
+                UPDATE public.notifications
+                SET title = v_title,
+                    body = v_body,
+                    data = v_data,
+                    read_at = NULL,
+                    created_at = pg_catalog.now()
+                WHERE id = v_existing_id;
+            ELSE
+                INSERT INTO public.notifications (user_id, title, body, data, created_at)
+                VALUES (r_follower.user_id, v_title, v_body, v_data, pg_catalog.now());
+            END IF;
         END IF;
     END LOOP;
 
